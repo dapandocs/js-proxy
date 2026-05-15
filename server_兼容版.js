@@ -1,5 +1,3 @@
-// 可以打开界面，但是不能在界面操作，比如搜索
-
 const express = require("express");
 const morgan = require("morgan");
 const dotenv = require("dotenv");
@@ -25,10 +23,36 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade"
 ]);
+const PROXY_CONTEXT_COOKIE = "__proxy_target_url";
+const GOOGLE_SEARCH_ORIGIN = "https://www.google.com/";
 
 app.disable("x-powered-by");
 app.set("trust proxy", true);
 app.use(morgan("combined"));
+
+function parseCookies(cookieHeader) {
+  const cookies = {};
+  if (!cookieHeader) {
+    return cookies;
+  }
+
+  cookieHeader.split(";").forEach((part) => {
+    const index = part.indexOf("=");
+    if (index === -1) {
+      return;
+    }
+
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    if (!key) {
+      return;
+    }
+
+    cookies[key] = value;
+  });
+
+  return cookies;
+}
 
 function normalizeTargetUrl(text) {
   if (!text || typeof text !== "string") {
@@ -48,8 +72,72 @@ function normalizeTargetUrl(text) {
   return value;
 }
 
+function getRefererTargetUrlText(req) {
+  const referer = req.get("referer") || req.get("referrer");
+  if (!referer) {
+    return null;
+  }
+
+  try {
+    const refererUrl = new URL(referer);
+    const refererTargetUrl = normalizeTargetUrl(refererUrl.searchParams.get("url"));
+    if (!refererTargetUrl) {
+      return null;
+    }
+
+    return refererTargetUrl;
+  } catch {
+    return null;
+  }
+}
+
+function getCookieTargetUrlText(req) {
+  const cookies = parseCookies(req.headers.cookie || "");
+  const cookieValue = cookies[PROXY_CONTEXT_COOKIE];
+  if (!cookieValue) {
+    return null;
+  }
+
+  try {
+    let value = cookieValue;
+    for (let i = 0; i < 2; i += 1) {
+      const decoded = decodeURIComponent(value);
+      if (decoded === value) {
+        break;
+      }
+      value = decoded;
+    }
+
+    return normalizeTargetUrl(value);
+  } catch {
+    return null;
+  }
+}
+
+function getKnownRelativeTargetUrlText(req) {
+  if (req.path === "/search" && typeof req.query?.q === "string") {
+    return GOOGLE_SEARCH_ORIGIN;
+  }
+
+  return null;
+}
+
 function getTargetUrlText(req) {
-  return normalizeTargetUrl(req.query?.url);
+  const queryUrl = normalizeTargetUrl(req.query?.url);
+  if (queryUrl) {
+    return queryUrl;
+  }
+
+  const baseTargetUrl = getRefererTargetUrlText(req) || getCookieTargetUrlText(req) || getKnownRelativeTargetUrlText(req);
+  if (!baseTargetUrl) {
+    return null;
+  }
+
+  try {
+    return new URL(req.originalUrl, baseTargetUrl).href;
+  } catch {
+    return null;
+  }
 }
 
 function stripHopByHopHeaders(headers) {
@@ -82,6 +170,23 @@ function sendJsonError(res, statusCode, message, details) {
   });
 }
 
+function setProxyHeader(res, key, value) {
+  if (key.toLowerCase() !== "set-cookie") {
+    res.setHeader(key, value);
+    return;
+  }
+
+  const current = res.getHeader(key);
+  const nextValues = Array.isArray(value) ? value : [value];
+  if (!current) {
+    res.setHeader(key, nextValues);
+    return;
+  }
+
+  const currentValues = Array.isArray(current) ? current : [current];
+  res.setHeader(key, [...currentValues, ...nextValues]);
+}
+
 function buildProxyUrl(req, targetUrl) {
   const protocol = req.protocol || req.headers["x-forwarded-proto"] || "http";
   const host = req.get("host");
@@ -107,6 +212,7 @@ function rewriteRedirectLocation(req, currentTargetUrl, location) {
 }
 
 function proxyRequest(req, res) {
+  const hasExplicitTargetUrl = Boolean(normalizeTargetUrl(req.query?.url));
   const targetUrlText = getTargetUrlText(req);
   if (!targetUrlText) {
     return sendJsonError(res, 400, "Missing target URL. Use /url?url=https%3A%2F%2Fexample.com%2F");
@@ -123,8 +229,20 @@ function proxyRequest(req, res) {
     return sendJsonError(res, 400, "Only http and https URLs are supported");
   }
 
+  if (!hasExplicitTargetUrl && (req.method === "GET" || req.method === "HEAD")) {
+    return res.redirect(302, buildProxyUrl(req, targetUrl));
+  }
+
+  res.cookie(PROXY_CONTEXT_COOKIE, targetUrl.href, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: req.secure,
+    path: "/"
+  });
+
   const headers = stripHopByHopHeaders(req.headers);
   delete headers.host;
+  delete headers.cookie;
   headers.host = targetUrl.host;
   headers["user-agent"] = headers["user-agent"] || DEFAULT_USER_AGENT;
   headers["accept-language"] = headers["accept-language"] || DEFAULT_ACCEPT_LANGUAGE;
@@ -151,7 +269,7 @@ function proxyRequest(req, res) {
           return;
         }
 
-        res.setHeader(key, value);
+        setProxyHeader(res, key, value);
       });
 
       proxyRes.pipe(res);
@@ -179,13 +297,7 @@ function proxyRequest(req, res) {
   req.pipe(proxyReq);
 }
 
-app.all("/url", proxyRequest);
-
-app.use((req, res) => {
-  res.status(404).json({
-    message: "Not found. Use /url?url=https%3A%2F%2Fexample.com%2F"
-  });
-});
+app.all("*", proxyRequest);
 
 app.listen(PORT, () => {
   console.log(`Proxy server running on http://0.0.0.0:${PORT}`);
