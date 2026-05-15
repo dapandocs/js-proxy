@@ -1,0 +1,22 @@
+{
+  "name": "transparent-forward-proxy",
+  "version": "1.0.0",
+  "description": "Transparent reverse proxy for APIs and static assets",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "keywords": [
+    "proxy",
+    "reverse-proxy",
+    "node",
+    "express"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "morgan": "^1.10.0"
+  }
+}
