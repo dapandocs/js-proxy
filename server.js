@@ -24,6 +24,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade"
 ]);
 const PROXY_CONTEXT_COOKIE = "__proxy_target_url";
+const GOOGLE_SEARCH_ORIGIN = "https://www.google.com/";
 
 app.disable("x-powered-by");
 app.set("trust proxy", true);
@@ -98,10 +99,27 @@ function getCookieTargetUrlText(req) {
   }
 
   try {
-    return normalizeTargetUrl(decodeURIComponent(cookieValue));
+    let value = cookieValue;
+    for (let i = 0; i < 2; i += 1) {
+      const decoded = decodeURIComponent(value);
+      if (decoded === value) {
+        break;
+      }
+      value = decoded;
+    }
+
+    return normalizeTargetUrl(value);
   } catch {
     return null;
   }
+}
+
+function getKnownRelativeTargetUrlText(req) {
+  if (req.path === "/search" && typeof req.query?.q === "string") {
+    return GOOGLE_SEARCH_ORIGIN;
+  }
+
+  return null;
 }
 
 function getTargetUrlText(req) {
@@ -110,7 +128,7 @@ function getTargetUrlText(req) {
     return queryUrl;
   }
 
-  const baseTargetUrl = getRefererTargetUrlText(req) || getCookieTargetUrlText(req);
+  const baseTargetUrl = getRefererTargetUrlText(req) || getCookieTargetUrlText(req) || getKnownRelativeTargetUrlText(req);
   if (!baseTargetUrl) {
     return null;
   }
@@ -215,7 +233,7 @@ function proxyRequest(req, res) {
     return res.redirect(302, buildProxyUrl(req, targetUrl));
   }
 
-  res.cookie(PROXY_CONTEXT_COOKIE, encodeURIComponent(targetUrl.href), {
+  res.cookie(PROXY_CONTEXT_COOKIE, targetUrl.href, {
     httpOnly: true,
     sameSite: "lax",
     secure: req.secure,
@@ -224,6 +242,7 @@ function proxyRequest(req, res) {
 
   const headers = stripHopByHopHeaders(req.headers);
   delete headers.host;
+  delete headers.cookie;
   headers.host = targetUrl.host;
   headers["user-agent"] = headers["user-agent"] || DEFAULT_USER_AGENT;
   headers["accept-language"] = headers["accept-language"] || DEFAULT_ACCEPT_LANGUAGE;

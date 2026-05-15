@@ -8,6 +8,8 @@
 
 如果页面里的表单或链接使用相对路径，例如 Google 搜索表单提交到 `/search?q=egg`，服务会根据浏览器发送的 `Referer` 自动推导原始目标站，把请求转发到 `https://www.google.com/search?q=egg`。
 
+如果浏览器没有发送完整 `Referer`，服务会使用代理上下文 cookie 继续推导目标站；对 Google 搜索的 `/search?q=...` 也内置了兜底转发到 `https://www.google.com/search?q=...`。
+
 ## 安装
 
 ```bash
