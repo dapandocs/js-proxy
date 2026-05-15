@@ -8,7 +8,6 @@ dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
-const REWRITE_REDIRECT = (process.env.REWRITE_REDIRECT || "true").toLowerCase() === "true";
 const DEFAULT_USER_AGENT =
   process.env.DEFAULT_USER_AGENT ||
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -41,13 +40,6 @@ function getTargetUrlText(req) {
   }
   const withoutLeadingSlash = (req.path || "").replace(/^\/+/, "");
   return normalizeTargetUrl(withoutLeadingSlash);
-}
-
-function buildProxyUrl(req, targetAbsoluteUrl) {
-  const host = req.headers.host || "";
-  const protoHeader = (req.headers["x-forwarded-proto"] || "").toString().split(",")[0].trim();
-  const scheme = protoHeader || (req.socket.encrypted ? "https" : "http");
-  return `${scheme}://${host}/?url=${encodeURIComponent(targetAbsoluteUrl)}`;
 }
 
 app.all("*", (req, res) => {
@@ -91,19 +83,6 @@ app.all("*", (req, res) => {
           return;
         }
 
-        if (REWRITE_REDIRECT && key.toLowerCase() === "location") {
-          const rawLocation = Array.isArray(value) ? value[0] : value;
-          if (typeof rawLocation === "string" && rawLocation.length > 0) {
-            try {
-              const absolute = new URL(rawLocation, targetUrl).toString();
-              res.setHeader("location", buildProxyUrl(req, absolute));
-              return;
-            } catch {
-              // Keep original location when parsing fails.
-            }
-          }
-        }
-
         res.setHeader(key, value);
       });
 
@@ -127,5 +106,4 @@ app.all("*", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Proxy server running on http://0.0.0.0:${PORT}`);
   console.log("Request format: /https://target-domain/path or /?url=https://target-domain/path");
-  console.log(`Rewrite redirect: ${REWRITE_REDIRECT}`);
 });
