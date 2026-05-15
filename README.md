@@ -1,53 +1,94 @@
-# URL Path Forward Proxy (Node.js)
+# Express URL 中转服务
 
-这个项目按你的需求实现：
+一个基于 Express 的流式 URL 中转服务。客户端请求本服务的 `/url?url=...`，服务端请求目标地址，并把目标站的状态码、响应头和响应体返回给客户端。
 
-- 用户请求：`http://你的服务器:3000/https://www.yyy.com/api/chat`
-- 代理实际请求：`https://www.yyy.com/api/chat`
-- 然后把响应状态码、响应头、响应体原样返回给用户
+支持 HTML、JS、CSS、图片、文件下载、视频流、SSE，以及 `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`OPTIONS` 等 HTTP 方法。
 
-支持 GET/POST/PUT/DELETE 等方法，适用于 API、JS、CSS、图片、文件下载等 HTTP 内容透传。
-
-## 1. 安装
+## 安装
 
 ```bash
 npm install
 ```
 
-## 2. 配置
-
-```bash
-copy .env.example .env
-```
-
-`.env`:
-
-- `PORT=3000`
-
-## 3. 启动
+## 启动
 
 ```bash
 npm run dev
 ```
 
-## 4. 调用方式
-
-示例：
+默认监听：
 
 ```text
-http://212.21.33.1:3000/https://www.yyy.com/api/chat
+http://0.0.0.0:3000
 ```
 
-带 query：
+## 调用方式
+
+目标 URL 建议先 URL encode，尤其是目标 URL 自己带 query 参数时。
 
 ```text
-http://212.21.33.1:3000/https://www.yyy.com/api/chat?room=1
+http://localhost:3000/url?url=https%3A%2F%2Fwww.baidu.com%2F
 ```
 
-POST 示例（curl）：
+未编码的简单 URL 通常也可以：
+
+```text
+http://localhost:3000/url?url=https://www.baidu.com/
+```
+
+如果目标地址带参数，请使用编码后的 URL：
+
+```text
+http://localhost:3000/url?url=https%3A%2F%2Fexample.com%2Fapi%3Fa%3D1%26b%3D2
+```
+
+## POST 示例
 
 ```bash
-curl -X POST "http://212.21.33.1:3000/https://www.yyy.com/api/chat" ^
-  -H "content-type: application/json" ^
+curl -X POST "http://localhost:3000/url?url=https%3A%2F%2Fhttpbin.org%2Fpost" \
+  -H "content-type: application/json" \
   -d "{\"msg\":\"hello\"}"
 ```
+
+Windows PowerShell:
+
+```powershell
+curl.exe -X POST "http://localhost:3000/url?url=https%3A%2F%2Fhttpbin.org%2Fpost" `
+  -H "content-type: application/json" `
+  -d "{\"msg\":\"hello\"}"
+```
+
+## 配置
+
+可以通过环境变量配置：
+
+```text
+PORT=3000
+PROXY_TIMEOUT_MS=60000
+DEFAULT_USER_AGENT=Mozilla/5.0 ...
+DEFAULT_ACCEPT_LANGUAGE=zh-CN,zh;q=0.9,en;q=0.8
+```
+
+说明：
+
+- `PORT`：监听端口。
+- `PROXY_TIMEOUT_MS`：上游请求超时时间，单位毫秒；设为 `0` 表示不主动设置超时。
+- `DEFAULT_USER_AGENT`：客户端没有传 `user-agent` 时使用的默认值。
+- `DEFAULT_ACCEPT_LANGUAGE`：客户端没有传 `accept-language` 时使用的默认值。
+
+## 部署
+
+生产环境可以直接运行：
+
+```bash
+npm start
+```
+
+如果前面有 Nginx，可以把公网域名反代到本服务端口。该服务按你的需求默认完全开放，不做 token 或域名白名单限制；公网部署时建议在外层用防火墙、Nginx、CDN 或访问控制限制可访问范围。
+
+## 错误返回
+
+- `400`：缺少 `url`、URL 无效，或协议不是 `http`/`https`。
+- `404`：访问了 `/url` 之外的路径。
+- `502`：上游请求失败。
+- `504`：上游请求超时。
