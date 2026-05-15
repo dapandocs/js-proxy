@@ -25,6 +25,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 app.disable("x-powered-by");
+app.set("trust proxy", true);
 app.use(morgan("combined"));
 
 function normalizeTargetUrl(text) {
@@ -79,6 +80,30 @@ function sendJsonError(res, statusCode, message, details) {
   });
 }
 
+function buildProxyUrl(req, targetUrl) {
+  const protocol = req.protocol || req.headers["x-forwarded-proto"] || "http";
+  const host = req.get("host");
+
+  return `${protocol}://${host}/url?url=${encodeURIComponent(targetUrl.href)}`;
+}
+
+function rewriteRedirectLocation(req, currentTargetUrl, location) {
+  if (!location || typeof location !== "string") {
+    return location;
+  }
+
+  try {
+    const nextTargetUrl = new URL(location, currentTargetUrl);
+    if (nextTargetUrl.protocol !== "http:" && nextTargetUrl.protocol !== "https:") {
+      return location;
+    }
+
+    return buildProxyUrl(req, nextTargetUrl);
+  } catch {
+    return location;
+  }
+}
+
 function proxyRequest(req, res) {
   const targetUrlText = getTargetUrlText(req);
   if (!targetUrlText) {
@@ -116,6 +141,11 @@ function proxyRequest(req, res) {
 
       Object.entries(stripHopByHopHeaders(proxyRes.headers)).forEach(([key, value]) => {
         if (typeof value === "undefined") {
+          return;
+        }
+
+        if (key.toLowerCase() === "location") {
+          res.setHeader(key, rewriteRedirectLocation(req, targetUrl, value));
           return;
         }
 
