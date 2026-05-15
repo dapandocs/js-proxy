@@ -1,3 +1,5 @@
+// 可以打开界面，但是不能在界面操作，比如搜索
+
 const express = require("express");
 const morgan = require("morgan");
 const dotenv = require("dotenv");
@@ -47,27 +49,7 @@ function normalizeTargetUrl(text) {
 }
 
 function getTargetUrlText(req) {
-  const queryUrl = normalizeTargetUrl(req.query?.url);
-  if (queryUrl) {
-    return queryUrl;
-  }
-
-  const referer = req.get("referer") || req.get("referrer");
-  if (!referer) {
-    return null;
-  }
-
-  try {
-    const refererUrl = new URL(referer);
-    const refererTargetUrl = normalizeTargetUrl(refererUrl.searchParams.get("url"));
-    if (!refererTargetUrl) {
-      return null;
-    }
-
-    return new URL(req.originalUrl, refererTargetUrl).href;
-  } catch {
-    return null;
-  }
+  return normalizeTargetUrl(req.query?.url);
 }
 
 function stripHopByHopHeaders(headers) {
@@ -197,7 +179,13 @@ function proxyRequest(req, res) {
   req.pipe(proxyReq);
 }
 
-app.all("*", proxyRequest);
+app.all("/url", proxyRequest);
+
+app.use((req, res) => {
+  res.status(404).json({
+    message: "Not found. Use /url?url=https%3A%2F%2Fexample.com%2F"
+  });
+});
 
 app.listen(PORT, () => {
   console.log(`Proxy server running on http://0.0.0.0:${PORT}`);

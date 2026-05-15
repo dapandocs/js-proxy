@@ -4,6 +4,10 @@
 
 支持 HTML、JS、CSS、图片、文件下载、视频流、SSE，以及 `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`OPTIONS` 等 HTTP 方法。
 
+如果目标站返回 `301/302/307/308` 跳转，服务会把 `Location` 改写成本代理的 `/url?url=...` 地址，避免浏览器直接跳到目标站。
+
+如果页面里的表单或链接使用相对路径，例如 Google 搜索表单提交到 `/search?q=egg`，服务会根据浏览器发送的 `Referer` 自动推导原始目标站，把请求转发到 `https://www.google.com/search?q=egg`。
+
 ## 安装
 
 ```bash
@@ -75,6 +79,10 @@ DEFAULT_ACCEPT_LANGUAGE=zh-CN,zh;q=0.9,en;q=0.8
 - `PROXY_TIMEOUT_MS`：上游请求超时时间，单位毫秒；设为 `0` 表示不主动设置超时。
 - `DEFAULT_USER_AGENT`：客户端没有传 `user-agent` 时使用的默认值。
 - `DEFAULT_ACCEPT_LANGUAGE`：客户端没有传 `accept-language` 时使用的默认值。
+
+## 注意
+
+本服务会改写 HTTP 跳转响应头，并支持基于 `Referer` 的相对路径转发，但不会改写 HTML、JS、CSS 内容里的资源地址或脚本跳转。如果目标网页内部通过 JavaScript 跳转，或者页面资源写死为原站绝对地址，浏览器仍可能直接请求原站。
 
 ## 部署
 
