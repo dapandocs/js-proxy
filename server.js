@@ -23,10 +23,35 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade"
 ]);
+const PROXY_CONTEXT_COOKIE = "__proxy_target_url";
 
 app.disable("x-powered-by");
 app.set("trust proxy", true);
 app.use(morgan("combined"));
+
+function parseCookies(cookieHeader) {
+  const cookies = {};
+  if (!cookieHeader) {
+    return cookies;
+  }
+
+  cookieHeader.split(";").forEach((part) => {
+    const index = part.indexOf("=");
+    if (index === -1) {
+      return;
+    }
+
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    if (!key) {
+      return;
+    }
+
+    cookies[key] = value;
+  });
+
+  return cookies;
+}
 
 function normalizeTargetUrl(text) {
   if (!text || typeof text !== "string") {
@@ -46,12 +71,7 @@ function normalizeTargetUrl(text) {
   return value;
 }
 
-function getTargetUrlText(req) {
-  const queryUrl = normalizeTargetUrl(req.query?.url);
-  if (queryUrl) {
-    return queryUrl;
-  }
-
+function getRefererTargetUrlText(req) {
   const referer = req.get("referer") || req.get("referrer");
   if (!referer) {
     return null;
@@ -64,7 +84,39 @@ function getTargetUrlText(req) {
       return null;
     }
 
-    return new URL(req.originalUrl, refererTargetUrl).href;
+    return refererTargetUrl;
+  } catch {
+    return null;
+  }
+}
+
+function getCookieTargetUrlText(req) {
+  const cookies = parseCookies(req.headers.cookie || "");
+  const cookieValue = cookies[PROXY_CONTEXT_COOKIE];
+  if (!cookieValue) {
+    return null;
+  }
+
+  try {
+    return normalizeTargetUrl(decodeURIComponent(cookieValue));
+  } catch {
+    return null;
+  }
+}
+
+function getTargetUrlText(req) {
+  const queryUrl = normalizeTargetUrl(req.query?.url);
+  if (queryUrl) {
+    return queryUrl;
+  }
+
+  const baseTargetUrl = getRefererTargetUrlText(req) || getCookieTargetUrlText(req);
+  if (!baseTargetUrl) {
+    return null;
+  }
+
+  try {
+    return new URL(req.originalUrl, baseTargetUrl).href;
   } catch {
     return null;
   }
@@ -100,6 +152,23 @@ function sendJsonError(res, statusCode, message, details) {
   });
 }
 
+function setProxyHeader(res, key, value) {
+  if (key.toLowerCase() !== "set-cookie") {
+    res.setHeader(key, value);
+    return;
+  }
+
+  const current = res.getHeader(key);
+  const nextValues = Array.isArray(value) ? value : [value];
+  if (!current) {
+    res.setHeader(key, nextValues);
+    return;
+  }
+
+  const currentValues = Array.isArray(current) ? current : [current];
+  res.setHeader(key, [...currentValues, ...nextValues]);
+}
+
 function buildProxyUrl(req, targetUrl) {
   const protocol = req.protocol || req.headers["x-forwarded-proto"] || "http";
   const host = req.get("host");
@@ -125,6 +194,7 @@ function rewriteRedirectLocation(req, currentTargetUrl, location) {
 }
 
 function proxyRequest(req, res) {
+  const hasExplicitTargetUrl = Boolean(normalizeTargetUrl(req.query?.url));
   const targetUrlText = getTargetUrlText(req);
   if (!targetUrlText) {
     return sendJsonError(res, 400, "Missing target URL. Use /url?url=https%3A%2F%2Fexample.com%2F");
@@ -140,6 +210,17 @@ function proxyRequest(req, res) {
   if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") {
     return sendJsonError(res, 400, "Only http and https URLs are supported");
   }
+
+  if (!hasExplicitTargetUrl && (req.method === "GET" || req.method === "HEAD")) {
+    return res.redirect(302, buildProxyUrl(req, targetUrl));
+  }
+
+  res.cookie(PROXY_CONTEXT_COOKIE, encodeURIComponent(targetUrl.href), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: req.secure,
+    path: "/"
+  });
 
   const headers = stripHopByHopHeaders(req.headers);
   delete headers.host;
@@ -169,7 +250,7 @@ function proxyRequest(req, res) {
           return;
         }
 
-        res.setHeader(key, value);
+        setProxyHeader(res, key, value);
       });
 
       proxyRes.pipe(res);
